@@ -10,7 +10,7 @@ blocked = []
 class player(object):
     global blocked
 
-    def __init__(self, board, quickRes=False, double=False, rule=2, maxIter=1000):
+    def __init__(self, board, quickRes=False, double=False, rule=2, maxIter=100000):
         # frame.board board: game board
         # bool quickRes: True: faster calculation; False: more precise result
         # TODO: Double checks
@@ -232,46 +232,31 @@ class player(object):
         value = self.b.prob
         temp_val = np.zeros(shape=value.shape)
         neighbors = []
-        print(row, col)
-        print(len(value) - 1)
         for (i, j) in [(1, 0), (0, 1), (0, -1), (-1, 0)]:
             if 0 <= row + i < len(value):
                 if 0 <= col + j < len(value):
                     if value[row + i, col + j] > 0:
-                        print(row + i, col + j, value[row + i, col + j])
                         cell = (row + i, col + j)
                         neighbors.append(cell)
-        print(neighbors)
-        # print(temp_val.shape)
-        # print(value.shape)
         for l in neighbors:
             temp_val[l] = value[l]
-        # temp_val = np.where(temp_val)
-        # eligible = np.argwhere(value==np.amax(value))
-        # min = len(value) * 2
-        # for e in eligible:
-        #     d = manhattan(self, x=e, y=[row,col])
-        #     if d < min:
-        #         min = d
-        #         min_pos = e
-        # # pos = np.unravel_index(np.argmax(value), value.shape)
         pos = np.unravel_index(np.argmax(temp_val), temp_val.shape)
-        # pos = (min_pos[0], min_pos[1])
         return pos
 
     # rule 2
     def maxSucP(self, row=None, col=None):
         value = self.b.prob * self.b.sucP
-        # TODO: manhattan
-        eligible = np.argwhere(value == np.amax(value))
-        min = len(value) * 2
-        for e in eligible:
-            d = manhattan(self, x=e, y=[row, col])
-            if d < min:
-                min = d
-                min_pos = e
-        # pos = np.unravel_index(np.argmax(value), value.shape)
-        pos = (min_pos[0], min_pos[1])
+        temp_val = np.zeros(shape=value.shape)
+        neighbors = []
+        for (i, j) in [(1, 0), (0, 1), (0, -1), (-1, 0)]:
+            if 0 <= row + i < len(value):
+                if 0 <= col + j < len(value):
+                    if value[row + i, col + j] > 0:
+                        cell = (row + i, col + j)
+                        neighbors.append(cell)
+        for l in neighbors:
+            temp_val[l] = value[l]
+        pos = np.unravel_index(np.argmax(temp_val), temp_val.shape)
         return pos
 
     # rule 3
@@ -330,10 +315,11 @@ class player(object):
     # solver
     def solve(self):
 
-        pos = None
-        prev_pos = None
+        pos = self.b.robot
+        prev_pos = self.b.robot
 
         prev_blocked = False
+        # count = 0
         while not self.success:
             if prev_blocked:
                 pos = prev_pos
@@ -372,10 +358,14 @@ class player(object):
             self.b.probHistory.append(self.b.prob.copy())
 
             # in case of too long loop
+            #TODO: Uncomment below to limit iterations
             if len(self.searchHistory) > self.maxIter:
                 break
+            # count += 1
+
 
             # self.b.visualize()
+
         return
 
 
@@ -386,13 +376,14 @@ def manhattan(self, x, y):
 if __name__ == '__main__':
     print(datetime.now())
     # moving= True means agent can teleport
-    b = frame.board(size=10, moving=False, targetMoving=False)
-    p = player(b, double=False, rule=1)
+    b = frame.board(size=25, moving=False, targetMoving=False)
+    p = player(b, double=False, rule=2)
     p.solve()
     print(datetime.now())
-    for pp in b.probHistory:
-        print(pp)
-    print(p.history)
+    # for pp in b.probHistory:
+    #     print(pp)
+    # print(p.history)
+    print(b.probHistory[:1])
     print(len(p.history))
 
     # for i in range(500):
