@@ -2,31 +2,29 @@ from datetime import datetime
 
 import numpy as np
 
-import frame
+import a_star
+import board
 
 blocked = []
+parent = dict()
 
 
 class player(object):
-    global blocked
+    global blocked, parent
 
-    def __init__(self, board, quickRes=False, double=False, rule=2, maxIter=100000):
-        # frame.board board: game board
+    def __init__(self, board, quickRes=False, double=False, agent=2, maxIter=2000000):
+        # board.board board: game board
         # bool quickRes: True: faster calculation; False: more precise result
-        # TODO: Double checks
         # int double in [1 : 4]: cell types that need double check. False: no double check
-        # int rule in [1 : 3]: search strategy.
+        # int agent in [1 : 3]: search strategy.
         # int maxIter in [1 : inf]: max search times in a board
-
         self.b = board
         self.quickRes = quickRes
         self.double = double and not self.b.targetMoving
-        self.rule = rule
+        self.agent = agent
         self.maxIter = maxIter
-
         # double check related
         self.doubleCount = np.zeros_like(self.b.cell, dtype=np.uint8)
-
         # report related
         self.reportHistory = []
         self.targetHistory = []
@@ -41,7 +39,6 @@ class player(object):
     def updateP(self, prob, row, col, quick=False, force=False, temp=False, blocked=[]):
         # bool force: True: force to normalize prob; False: depand on quick
         # bool temp: True: this is a temp prob, and will not update b.prob; False: update b.prob
-
         # process temp
         if temp:
             tempProb = np.copy(prob)
@@ -69,7 +66,7 @@ class player(object):
     def updateR(self, prob, report, quick=False, force=False, temp=False):
         solveFlag, targetMove = self.solveReport(report)
         if solveFlag:
-            print('re-update')
+            # print('re-update')
             tempProb = self.reUpdateReport(temp=temp)
         else:
             tempProb = self.updateReport(prob, targetMove, quick=quick, force=force, temp=temp)
@@ -81,7 +78,6 @@ class player(object):
         # returns:
         # bool solve Flag: True: reportHistory can translate to targetHistory; False: cannot translate
         # tuple targetMove with element (prev, post): target move from prev to post
-
         solveFlag = False
         if self.targetHistory:  # translatable
             targetMove = self.solveTarget(report)
@@ -96,11 +92,9 @@ class player(object):
                 if len(tReport) == 1:
                     tReport = (tReport[0], tReport[0])
                 targetMove = (tReport, tReport[:: -1])
-            else:  # something wrong, target teleported
-                print('E: solution.solveReport. wrong report')
-                # print(report)
+            else:
                 exit()
-        else:  # the first report
+        else:
             tReport = tuple(np.where(report > 0)[0])
             if len(tReport) == 1:
                 tReport = (tReport[0], tReport[0])
@@ -145,7 +139,6 @@ class player(object):
         for i in range(len(history) - 1):
             tempProb = self.updateP(tempProb, *self.searchHistory[i], quick=True, temp=temp)
             tempProb = self.updateReport(self.b.prob, ((history[i], history[i + 1]),), quick=True, temp=temp)
-
         if not temp:
             self.b.prob = tempProb
         return tempProb
@@ -156,25 +149,16 @@ class player(object):
         if sumP is None:
             sumP = np.sum(tempProb)
         if sumP == 0:
-            print('E: solution.normalizeP. zero sumP')
+            # print('E: solution.normalizeP. zero sumP')
             exit()
         tempProb = tempProb / sumP
         return tempProb
 
     def moveTo(self, row, col):
-        while self.b.robot != (row, col):
-            if self.b.robot[0] < row:
-                self.b.move(self.b.robot[0] + 1, self.b.robot[1])
-                self.history.append((self.b.robot, 'm'))
-            elif self.b.robot[0] > row:
-                self.b.move(self.b.robot[0] - 1, self.b.robot[1])
-                self.history.append((self.b.robot, 'm'))
-            if self.b.robot[1] < col:
-                self.b.move(self.b.robot[0], self.b.robot[1] + 1)
-                self.history.append((self.b.robot, 'm'))
-            elif self.b.robot[1] > col:
-                self.b.move(self.b.robot[0], self.b.robot[1] - 1)
-                self.history.append((self.b.robot, 'm'))
+        a_star_path = a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=(row, col))
+        for x in a_star_path:
+            self.history.append((x, 'm'))
+        self.b.robot = (row, col)
         return
 
     def search(self, row, col):
@@ -207,136 +191,129 @@ class player(object):
             self.targetHistory.insert(0, tTer)
         return
 
-    # rule functions
-    # get next block to search
-    def getNext(self, row=None, col=None, rule=3):
+    # get next cell
+    def getNext(self, row=None, col=None, agent=3):
         pos = None
         while pos in blocked or pos is None:
-            if rule == 1:
+            if agent == 6:
                 pos = self.maxProb(row, col)
-            elif rule == 2:
+            elif agent == 7:
                 pos = self.maxSucP(row, col)
-            elif rule == 3:
-                pos = self.maxInfo(row, col)
-            elif rule == 4:
-                pos = self.minMove(row, col)
-            elif rule == 5:
-                pos = self.minCost(row, col)
+            elif agent == 8:
+                pos = self.minMove(row, col, agent=agent)
+            elif agent == 8.1:
+                pos = self.minMove(row, col, agent=agent)
             else:
-                print('E: solution.getNext. wrong rule number.')
                 exit()
+            if pos in blocked:
+                pos = parent[pos]
         return pos
 
-    # rule 1
+    # agent 6: using belief state
     def maxProb(self, row=None, col=None):
         value = self.b.prob
-        temp_val = np.zeros(shape=value.shape)
-        neighbors = []
-        for (i, j) in [(1, 0), (0, 1), (0, -1), (-1, 0)]:
-            if 0 <= row + i < len(value):
-                if 0 <= col + j < len(value):
-                    if value[row + i, col + j] > 0:
-                        cell = (row + i, col + j)
-                        neighbors.append(cell)
-        for l in neighbors:
-            temp_val[l] = value[l]
-        pos = np.unravel_index(np.argmax(temp_val), temp_val.shape)
-        return pos
+        temp_m_val = value.copy()
+        max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        np.put(temp_m_val, [blocked], 0)
+        while a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=max_p) == -1 or max_p in blocked:
+            if max_p not in blocked:
+                blocked.append(max_p)
+                temp_m_val[max_p] = 0
+                self.b.prob[max_p] = 0
+            max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        return max_p
 
-    # rule 2
+    # agent 7 : using confidence state
     def maxSucP(self, row=None, col=None):
         value = self.b.prob * self.b.sucP
-        temp_val = np.zeros(shape=value.shape)
-        neighbors = []
-        for (i, j) in [(1, 0), (0, 1), (0, -1), (-1, 0)]:
-            if 0 <= row + i < len(value):
-                if 0 <= col + j < len(value):
-                    if value[row + i, col + j] > 0:
-                        cell = (row + i, col + j)
-                        neighbors.append(cell)
-        for l in neighbors:
-            temp_val[l] = value[l]
-        pos = np.unravel_index(np.argmax(temp_val), temp_val.shape)
-        return pos
+        temp_m_val = value.copy()
+        max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        np.put(temp_m_val, [blocked], 0)
+        while a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=max_p) == -1 or max_p in blocked:
+            if max_p not in blocked:
+                blocked.append(max_p)
+                temp_m_val[max_p] = 0
+                self.b.prob[max_p] = 0
+            max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        return max_p
 
-    # rule 3
-    def maxInfo(self, row=None, col=None):
-        tempSucP = self.b.prob * self.b.sucP
-        tempSucQ = 1 - tempSucP
-        searchInfo = tempSucP * np.log2(tempSucP) + tempSucQ * np.log2(tempSucQ)  # there should be negative. use min to find max
-        if self.b.targetMoving:
-            pass  # TODO: value = searchreportInfo
-        else:
-            value = searchInfo
-        pos = np.unravel_index(np.argmin(value), value.shape)  # use min instead
-        return pos
-
-    # rule 4 for moving = True, targetMoving = False
-    def minMove(self, row=None, col=None):
+    # agent 8: minimum moves respecting the confidence state
+    def minMove(self, row=None, col=None, agent=8):
         if row is None or col is None:
             row, col = self.b.robot
         find = self.b.prob * self.b.sucP
-        value = find / np.exp2(self.b.dist[row, col])
-        pos = np.unravel_index(np.argmax(value), value.shape)
-        return pos
+        t = np.array(self.b.dist[row, col], dtype=np.float128)
+        if agent == 8:
+            d = t ** 2
+        elif agent == 8.1:
+            d = np.exp2(t)
+        else:
+            # default
+            d = t ** 2
+        d[d == np.inf] = 0
+        value = np.divide(find, d, out=np.zeros_like(find), where=d != 0)
+        temp_m_val = value.copy()
+        max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        np.put(temp_m_val, [blocked], 0)
+        while a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=max_p) == -1 or max_p in blocked:
+            if max_p not in blocked:
+                blocked.append(max_p)
+                temp_m_val[max_p] = 0
+                self.b.prob[max_p] = 0
+            max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        return max_p
 
-    # rule 5 for moving = True, targetMoving = True #WARN: DO NOT use in targetMoving = False, because factor will be truncated
+    # Agent 9 moving agent for moving = True, targetMoving = True #WARN: DO NOT use in targetMoving = False, because factor will be truncated
     def minCost(self, row=None, col=None):
         if row is None or col is None:
             row, col = self.b.robot
         factor = np.empty_like(self.b.prob, dtype=np.float16)
         searchCost = np.empty_like(self.b.prob, dtype=np.float16)
         movingCost = np.zeros_like(self.b.prob, dtype=np.float16)
-
-        base = np.sum(self.b.prob / self.b.sucP)
-
+        # base = np.sum(self.b.prob / self.b.sucP)
+        base = np.sum(np.divide(self.b.prob, self.b.sucP, out=np.zeros_like(self.b.prob), where=self.b.sucP != 0))
         valid = (self.b.prob != 0)
         if self.b.targetMoving:
             factor[valid] = 1 / (1 - self.b.prob[valid] * self.b.sucP[valid])
             searchCost[valid] = (factor[valid] - 1) * (base - self.b.prob[valid])
-
         else:
             factor = 1 / (1 - self.b.prob * self.b.sucP)
             searchCost = (factor - 1) * (base - self.b.prob)
-
         if self.b.moving:
-            tempCost = np.sum(self.b.prob * self.b.dist[row, col])
             for nRow in range(self.b.rows):
                 for nCol in range(self.b.cols):
                     if valid[nRow, nCol]:
                         movingCost[nRow, nCol] = (factor[nRow, nCol] - 1) * np.sum(self.b.prob * self.b.dist[nRow, nCol])
-
         value = searchCost - movingCost - self.b.dist[row, col]
         value[~valid] = -np.inf
-
-        pos = np.unravel_index(np.argmax(value), value.shape)
-        return pos
+        temp_m_val = value.copy()
+        max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        np.put(temp_m_val, [blocked], 0)
+        while a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=max_p) == -1 or max_p in blocked:
+            if max_p not in blocked:
+                blocked.append(max_p)
+                temp_m_val[max_p] = 0
+                self.b.prob[max_p] = 0
+            max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
+        return max_p
 
     # solver
     def solve(self):
-
         pos = self.b.robot
         prev_pos = self.b.robot
-
-        prev_blocked = False
-        # count = 0
         while not self.success:
-            if prev_blocked:
-                pos = prev_pos
+            if pos in blocked:
+                pos = parent[pos]
             else:
-                pos = self.getNext(*self.b.robot, rule=self.rule)
-            # print(pos)
-            # print(self.b.sucP)
-            if self.b.sucP[pos[0]][pos[1]] != 0:
-                prev_pos = pos
-                prev_blocked = False
-            else:
-                prev_blocked = True
+                pos = self.getNext(*self.b.robot, agent=self.agent)
+                parent[pos] = prev_pos
+            if self.b.sucP[pos] == 0:
                 blocked.append(pos)
+            else:
+                prev_pos = pos
             # explore
             self.success, report = self.search(*pos)
             self.doubleCount[pos] = self.doubleCount[pos] + 1
-
             if self.success:
                 break
 
@@ -350,50 +327,54 @@ class player(object):
                 self.doubleCount[pos] = self.doubleCount[pos] + 1
                 if self.success:
                     break
-
             # update
             self.updateP(self.b.prob, *pos, blocked=blocked)
             if self.b.targetMoving:
                 self.updateR(self.b.prob, report)
             self.b.probHistory.append(self.b.prob.copy())
-
-            # in case of too long loop
-            #TODO: Uncomment below to limit iterations
             if len(self.searchHistory) > self.maxIter:
                 break
-            # count += 1
-
-
-            # self.b.visualize()
-
         return
 
 
-def manhattan(self, x, y):
-    return abs(x[0] - y[0]) + abs(x[1] - y[1])
-
-
 if __name__ == '__main__':
-    print(datetime.now())
-    # moving= True means agent can teleport
-    b = frame.board(size=25, moving=False, targetMoving=False)
-    p = player(b, double=False, rule=2)
-    p.solve()
-    print(datetime.now())
-    # for pp in b.probHistory:
-    #     print(pp)
-    # print(p.history)
-    print(b.probHistory[:1])
-    print(len(p.history))
-
-    # for i in range(500):
-    #   tempB = copy.deepcopy(b)
-    #   tempB.buildTerrain()
-    #   tempB.hideTarget()
-    #   p = player(tempB, double = 2, rule = 5)
-    #   p.solve()
-    #   # print(p.history)
-    #   # print(len(p.targetHistory))
-    #   print(len(p.history))
-
-    # # p.b.visualize()
+    for size in [101]:
+        # f = open('data_' + str(size) + '.csv', 'w+')
+        # f.write('iteration,agent,time,examinations,moves\n')
+        # f.close()
+        for it in range(1, 101):
+            b = board.grid(size=size, moving=True, targetMoving=False)
+            robot_location = b.robot
+            target_location = b._target
+            prob_init = b.prob
+            terrainP_init = b.terrainP
+            targetHistory_init = b.targetHistory
+            probHistory_init = b.probHistory
+            cell_init = b.cell
+            sucP_init = b.sucP
+            border_init = b.border
+            dist_init = b.dist
+            print('iteration:', it)
+            for agent in [6, 7, 8]:
+                b = board.grid(size=size, moving=True, targetMoving=False, robot_location=robot_location, target_location=target_location,
+                               prob_init=prob_init, terrainP_init=terrainP_init,
+                               targetHistory_init=targetHistory_init, probHistory_init=probHistory_init, cell_init=cell_init,
+                               sucP_init=sucP_init, border_init=border_init, dist_init=dist_init)
+                f = open('data_' + str(size) + '.csv', 'a+')
+                blocked = []
+                parent = dict()
+                print('agent:', agent)
+                if agent == 7.1:
+                    p = player(b, double=True, agent=7)
+                else:
+                    p = player(b, double=False, agent=agent)
+                start = datetime.now()
+                p.solve()
+                end = datetime.now()
+                difference = (end - start)
+                time = difference.total_seconds()
+                m = [(x, y) for (x, y) in p.history if y == 'm']
+                s = [(x, y) for (x, y) in p.history if y == 's']
+                if len(p.history) < 2000001:
+                    f.write(str(it) + ',' + str(agent) + ',' + str(time) + ',' + str(len(s)) + ',' + str(len(m)) + '\n')
+                f.close()

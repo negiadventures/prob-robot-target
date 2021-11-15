@@ -84,12 +84,10 @@ def get_neighbors(grid, dim):
 
 def get_shortest_path(grid, start, end):
     h_fun = 'MANHATTAN'
-    # Default start pos: (0,0)
-    print('### START A * to verify if board is solvable ###')
-    print(grid)
+    # print('### START A * ###')
     grid = np.where(grid == 0, 1, grid)
     grid = np.where(grid < 1, 0, grid)
-    print('### END A * ###')
+    # print('### END A * ###')
     dim = len(grid[0])
     shortest_path = a_star_search(start, end, get_neighbors(grid, dim), get_heuristic(h_fun, dim), grid)
     if shortest_path is None:
