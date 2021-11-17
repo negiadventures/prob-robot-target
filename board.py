@@ -6,7 +6,7 @@ import a_star
 class grid(object):
     # 0.7/3 for each terrain, 0.3 for block
     def __init__(self, size=50, terrainP=[0.24, 0.23, 0.23, 0.3], failP=[0.2, 0.5, 0.8, 1], moving=False, targetMoving=False, robot_location=None,
-                 target_location=None, prob_init=None, terrainP_init=None,
+                 target_location=None, targetTerrain=None, prob_init=None, terrainP_init=None,
                  targetHistory_init=None, probHistory_init=None, cell_init=None,
                  sucP_init=None, border_init=None, dist_init=None):
         # int size in [2 : inf]: size of board
@@ -20,6 +20,8 @@ class grid(object):
         self.targetMoving = targetMoving
         self.failP = failP
         self.search = True
+        self.targetTerrain = targetTerrain
+
         # initialize probabilities
         if prob_init is None:
             self.border = np.zeros((self.rows, self.cols, 4, 4), dtype=np.bool)
@@ -36,11 +38,11 @@ class grid(object):
             self.getDist()
             self.robot = (self.rows // 2, self.cols // 2)
             self.robotPos()
-            self._target = (self.rows, self.cols)
-            self.hideTarget()
+            self._target = (self.rows - 1, self.cols - 1)
+            self.hideTarget(targetTerrain)
             while a_star.get_shortest_path(grid=self.sucP, start=self.robot, end=self._target) == -1:
                 self.robotPos()
-                self.hideTarget()
+                self.hideTarget(targetTerrain)
         else:
             self.prob = prob_init
             self.cell = cell_init
@@ -82,14 +84,23 @@ class grid(object):
         return
 
     # init _target
-    def hideTarget(self):
+    def hideTarget(self, targetTerrain):
         pos = int(np.floor(np.random.random() * self.rows * self.cols))
         row, col = divmod(pos, self.cols)
         # Position of target should not fall on blocked cell
-        while self.sucP[row][col] == 0:
+        sP = '0.8'
+        if targetTerrain == 'Flat':
+            sP = '0.8'
+        elif targetTerrain == 'Hilly':
+            sP = '0.5'
+        else:
+            sP = '0.2'
+        self._target = (row, col)
+        while str(self.sucP[self._target]) != sP:
             pos = int(np.floor(np.random.random() * self.rows * self.cols))
             row, col = divmod(pos, self.cols)
-        # There should be a path from target to robot
+            # There should be a path from target to robot
+            self._target = (row, col)
         self._target = (row, col)
         self.targetHistory.append(self._target)
         return

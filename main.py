@@ -12,15 +12,12 @@ parent = dict()
 class player(object):
     global blocked, parent
 
-    def __init__(self, board, quickRes=False, double=False, agent=2, maxIter=2000000):
+    def __init__(self, board, agent=6, maxIter=2000000):
         # board.board board: game board
         # bool quickRes: True: faster calculation; False: more precise result
-        # int double in [1 : 4]: cell types that need double check. False: no double check
         # int agent in [1 : 3]: search strategy.
         # int maxIter in [1 : inf]: max search times in a board
         self.b = board
-        self.quickRes = quickRes
-        self.double = double and not self.b.targetMoving
         self.agent = agent
         self.maxIter = maxIter
         # double check related
@@ -53,7 +50,7 @@ class player(object):
 
         # process quick
         sumP = np.sum(tempProb)
-        if not force and (self.quickRes or quick) and sumP > 0.5:
+        if not force and sumP > 0.5:
             if not temp:
                 self.b.prob = tempProb
             return tempProb
@@ -64,8 +61,8 @@ class player(object):
 
     # update b.prob after report
     def updateR(self, prob, report, quick=False, force=False, temp=False):
-        solveFlag, targetMove = self.solveReport(report)
-        if solveFlag:
+        findFlag, targetMove = self.findReport(report)
+        if findFlag:
             # print('re-update')
             tempProb = self.reUpdateReport(temp=temp)
         else:
@@ -74,19 +71,19 @@ class player(object):
 
     # report functions
     # analysis report history
-    def solveReport(self, report):
+    def findReport(self, report):
         # returns:
-        # bool solve Flag: True: reportHistory can translate to targetHistory; False: cannot translate
+        # bool find Flag: True: reportHistory can translate to targetHistory; False: cannot translate
         # tuple targetMove with element (prev, post): target move from prev to post
-        solveFlag = False
+        findFlag = False
         if self.targetHistory:  # translatable
-            targetMove = self.solveTarget(report)
+            targetMove = self.findTarget(report)
         elif self.reportHistory:
             tPrevTer = self.reportHistory[-1] * report  # try to translate
             if 1 == np.count_nonzero(tPrevTer):  # translatable
                 self.backtrackReport(tPrevTer)
-                targetMove = self.solveTarget(report)
-                solveFlag = True
+                targetMove = self.findTarget(report)
+                findFlag = True
             elif 2 == np.count_nonzero(tPrevTer):  # not translatable
                 tReport = tuple(np.where(report > 0)[0])
                 if len(tReport) == 1:
@@ -101,7 +98,7 @@ class player(object):
             targetMove = (tReport, tReport[:: -1])
 
         self.reportHistory.append(report)
-        return (solveFlag, targetMove)
+        return (findFlag, targetMove)
 
     # update temp report
     def updateReport(self, prob, targetMove, quick=False, force=False, temp=False):
@@ -123,7 +120,7 @@ class player(object):
 
         sumP = np.sum(tempProb)
 
-        if not force and (self.quickRes or quick) and sumP > 0.5:
+        if not force and sumP > 0.5:
             if not temp:
                 self.b.prob = tempProb
             return tempProb
@@ -173,7 +170,7 @@ class player(object):
 
     # report tool functions
     # get temp target movement
-    def solveTarget(self, report):
+    def findTarget(self, report):
         diff = (report - self.targetHistory[-1]) > 0
         tTer = np.where(diff)
         tMove = (np.where(self.targetHistory[-1])[0][0], tTer[0][0])
@@ -196,13 +193,15 @@ class player(object):
         pos = None
         while pos in blocked or pos is None:
             if agent == 6:
-                pos = self.maxProb(row, col)
+                pos = self.belAgent(row, col)
             elif agent == 7:
-                pos = self.maxSucP(row, col)
+                pos = self.confAgent(row, col)
             elif agent == 8:
-                pos = self.minMove(row, col, agent=agent)
+                pos = self.minMoveAgent(row, col, agent=agent)
             elif agent == 8.1:
-                pos = self.minMove(row, col, agent=agent)
+                pos = self.minMoveAgent(row, col, agent=agent)
+            elif agent == 9:
+                pos = self.minCost(row, col)
             else:
                 exit()
             if pos in blocked:
@@ -210,7 +209,7 @@ class player(object):
         return pos
 
     # agent 6: using belief state
-    def maxProb(self, row=None, col=None):
+    def belAgent(self, row=None, col=None):
         value = self.b.prob
         temp_m_val = value.copy()
         max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
@@ -224,7 +223,7 @@ class player(object):
         return max_p
 
     # agent 7 : using confidence state
-    def maxSucP(self, row=None, col=None):
+    def confAgent(self, row=None, col=None):
         value = self.b.prob * self.b.sucP
         temp_m_val = value.copy()
         max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
@@ -237,8 +236,8 @@ class player(object):
             max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
         return max_p
 
-    # agent 8: minimum moves respecting the confidence state
-    def minMove(self, row=None, col=None, agent=8):
+    # agent 8, 8.1 : minimum moves respecting the confidence state
+    def minMoveAgent(self, row=None, col=None, agent=8):
         if row is None or col is None:
             row, col = self.b.robot
         find = self.b.prob * self.b.sucP
@@ -288,17 +287,16 @@ class player(object):
         value[~valid] = -np.inf
         temp_m_val = value.copy()
         max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
-        np.put(temp_m_val, [blocked], 0)
+        np.put(temp_m_val, [blocked], -np.inf)
         while a_star.get_shortest_path(grid=self.b.sucP, start=self.b.robot, end=max_p) == -1 or max_p in blocked:
             if max_p not in blocked:
                 blocked.append(max_p)
-                temp_m_val[max_p] = 0
+                temp_m_val[max_p] = -np.inf
                 self.b.prob[max_p] = 0
             max_p = np.unravel_index(np.argmax(temp_m_val), temp_m_val.shape)
         return max_p
 
-    # solver
-    def solve(self):
+    def find(self):
         pos = self.b.robot
         prev_pos = self.b.robot
         while not self.success:
@@ -317,16 +315,6 @@ class player(object):
             if self.success:
                 break
 
-            # double check
-            if self.double and self.b.cell[pos] < self.double:
-                self.updateP(self.b.prob, *pos)
-                if self.b.targetMoving:
-                    self.updateR(self.b.prob, report)
-                self.b.probHistory.append(self.b.prob.copy())
-                self.success, report = self.search(*pos)
-                self.doubleCount[pos] = self.doubleCount[pos] + 1
-                if self.success:
-                    break
             # update
             self.updateP(self.b.prob, *pos, blocked=blocked)
             if self.b.targetMoving:
@@ -338,43 +326,47 @@ class player(object):
 
 
 if __name__ == '__main__':
-    for size in [101]:
+    for size in [5, 10, 15, 20, 25, 50, 101]:
         # f = open('data_' + str(size) + '.csv', 'w+')
         # f.write('iteration,agent,time,examinations,moves\n')
         # f.close()
-        for it in range(1, 101):
-            b = board.grid(size=size, moving=True, targetMoving=False)
-            robot_location = b.robot
-            target_location = b._target
-            prob_init = b.prob
-            terrainP_init = b.terrainP
-            targetHistory_init = b.targetHistory
-            probHistory_init = b.probHistory
-            cell_init = b.cell
-            sucP_init = b.sucP
-            border_init = b.border
-            dist_init = b.dist
-            print('iteration:', it)
-            for agent in [6, 7, 8]:
-                b = board.grid(size=size, moving=True, targetMoving=False, robot_location=robot_location, target_location=target_location,
-                               prob_init=prob_init, terrainP_init=terrainP_init,
-                               targetHistory_init=targetHistory_init, probHistory_init=probHistory_init, cell_init=cell_init,
-                               sucP_init=sucP_init, border_init=border_init, dist_init=dist_init)
-                f = open('data_' + str(size) + '.csv', 'a+')
-                blocked = []
-                parent = dict()
-                print('agent:', agent)
-                if agent == 7.1:
-                    p = player(b, double=True, agent=7)
-                else:
-                    p = player(b, double=False, agent=agent)
-                start = datetime.now()
-                p.solve()
-                end = datetime.now()
-                difference = (end - start)
-                time = difference.total_seconds()
-                m = [(x, y) for (x, y) in p.history if y == 'm']
-                s = [(x, y) for (x, y) in p.history if y == 's']
-                if len(p.history) < 2000001:
-                    f.write(str(it) + ',' + str(agent) + ',' + str(time) + ',' + str(len(s)) + ',' + str(len(m)) + '\n')
-                f.close()
+        for targetTerrain in ['Flat', 'Hilly', 'Forest']:
+            for it in range(1, 101):
+                b = board.grid(size=size, targetTerrain=targetTerrain, moving=True, targetMoving=False)
+                robot_location = b.robot
+                target_location = b._target
+                prob_init = b.prob
+                terrainP_init = b.terrainP
+                targetHistory_init = b.targetHistory
+                probHistory_init = b.probHistory
+                cell_init = b.cell
+                sucP_init = b.sucP
+                border_init = b.border
+                dist_init = b.dist
+                print('iteration:', it)
+                for agent in [6, 7, 8, 8.1]:
+                    targetMoving = False
+                    moving = True
+                    if agent == 9:
+                        targetMoving = True
+                        moving = True
+                    b = board.grid(size=size, moving=moving, targetMoving=targetMoving, robot_location=robot_location,
+                                   target_location=target_location,
+                                   prob_init=prob_init, targetTerrain=targetTerrain, terrainP_init=terrainP_init,
+                                   targetHistory_init=targetHistory_init, probHistory_init=probHistory_init, cell_init=cell_init,
+                                   sucP_init=sucP_init, border_init=border_init, dist_init=dist_init)
+                    f = open('mov_' + str(size) + '.csv', 'a+')
+                    blocked = []
+                    parent = dict()
+                    print('agent:', agent)
+                    p = player(b, agent=agent)
+                    start = datetime.now()
+                    p.find()
+                    end = datetime.now()
+                    difference = (end - start)
+                    time = difference.total_seconds()
+                    m = [(x, y) for (x, y) in p.history if y == 'm']
+                    s = [(x, y) for (x, y) in p.history if y == 's']
+                    if len(p.history) < 2000001:
+                        f.write(str(it) + ',' + targetTerrain + ',' + str(agent) + ',' + str(time) + ',' + str(len(s)) + ',' + str(len(m)) + '\n')
+                    f.close()
